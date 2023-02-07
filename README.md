@@ -1,5 +1,5 @@
 # expect-runner
-This repository contains an expect/TCL script that could help users with automation. The idea is simple, send the command that needs to execute, the expected output, timeout, number, and retries. Then, the script will run for you. If you are good with `regex`, the whole concept should be simple for you to grasp. 
+This repository contains an expect/TCL script that could help users with automation. The idea is simple, send the command that needs to execute, the expected output, timeout, number, and retries. Then, the script will run for you. If you are good with `regex`, the whole concept should be simple for you to grasp.  you can find more about this script at https://technekey.com/one-expect-script-for-all-your-automation/
 Something like this:
 
 ### Syntax:
