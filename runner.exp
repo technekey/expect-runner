@@ -1,0 +1,169 @@
+#!/usr/bin/expect -f
+
+#Get the name of the script
+set argv0 [lindex $argv 0]
+
+#########################################################
+#set this to 1 to enable additional debugging statements
+set print_enabled 1
+
+#set this to 1 to send the logs to syslogs
+set send_to_log 0
+
+# set this to 1 to enable highest level of verbose
+exp_internal 0
+#########################################################
+
+set fallback_prompt_1 "This key is not known by any other names.*Are you sure you want to continue connecting.*"
+set fallback_response_1  "yes\r"
+
+proc print_message { message stream } {
+  global print_enabled send_to_log
+  if { $print_enabled == 1 } {
+    switch $stream {
+      "stdout" {
+        puts $message
+        if {$send_to_log == 1} {
+          catch {exec logger -p user.notice $message}
+        }
+      }
+      "stderr" {
+        puts stderr $message
+        if {$send_to_log == 1} {
+          catch {exec logger -p user.error $message}
+        }
+      }
+    }
+  }
+}
+
+
+
+proc help { } {
+  puts "Usage: script.exp {OPTIONS} (<cmd1> <pattern1> <timeout1> <retry_count1>) (<cmd2> <pattern2> <timeout2> <retry_count2>) ..."
+  puts ""
+  puts "Options:"
+  puts " -h Show help information"
+  puts ""
+  puts "Arguments:"
+  puts " cmd :     Command to run in the shell"
+  puts " pattern : Regular expression pattern to match the output of the command"
+  puts " timeout : Timeout in seconds to wait for the output of the command"
+  puts " retry_count : Number of times to retry the command if the pattern is not found"
+  puts "Example:"
+  puts "expect  ./b6.exp \"ssh admi@foo\" \"password:\" 60 3 \"adminpass\" \".*@.*\$\" 30 2 \"hostname -I\" \".*@.*\$\" 30 1"
+  exit 1
+}
+
+#Get the arguments
+set cmd_list [lrange $argv 0 end]
+
+#######
+for {set i 0} {$i < [llength $cmd_list]} {incr i 4} {
+  set timeout [lindex $cmd_list [expr $i + 2]]
+  set retry_count [lindex $cmd_list [expr $i + 3]]
+  if {![string is integer $timeout] || ![string is integer $retry_count]} {
+    print_message "Timeout and retry count must be integers." stderr
+    help
+  }
+}
+
+######
+
+#Check if the -h flag is present
+if {[lsearch $argv "-h"] != -1} {
+    print_message "Number of arguments must be divisible by 4." stderr
+help
+}
+
+#Check if there are no arguments or the number of arguments is not divisible by 4
+if {[llength $argv] == 0 || [expr [llength $argv] % 4] != 0} {
+    print_message "Number of arguments must be divisible by 4." stderr
+help
+}
+
+
+#Create an empty list to store the command-pattern-timeout-retry_count quadruples
+set cmd_pattern_timeout_retry_count_quadruples {}
+
+#Loop over the argument list in quadruples and store them as sub-lists in the cmd_pattern_timeout_retry_count_quadruples list
+for {set i 0} {$i < [llength $cmd_list]} {incr i 4} {
+    lappend cmd_pattern_timeout_retry_count_quadruples [list [lindex $cmd_list $i] [lindex $cmd_list [expr $i + 1]] [lindex $cmd_list [expr $i + 2]] [lindex $cmd_list [expr $i + 3]]]
+}
+
+#Spawn the shell
+log_user 0
+spawn /bin/sh
+log_user 1
+#Store the output of each command
+set cmd_output {}
+foreach cmd_pattern_timeout_retry_count $cmd_pattern_timeout_retry_count_quadruples {
+  set cmd [lindex $cmd_pattern_timeout_retry_count 0]
+  set pattern [lindex $cmd_pattern_timeout_retry_count 1]
+  set timeout [lindex $cmd_pattern_timeout_retry_count 2]
+  set retry_count [lindex $cmd_pattern_timeout_retry_count 3]
+
+  # Set the timeout value for the current command
+  set timeout $timeout
+  set success 0
+set printed 0
+for {set retry 0} {$retry < $retry_count} {incr retry} {
+  print_message "[exec date] Info: Running command: $cmd with pattern: $pattern, timeout: $timeout and retry count: [expr $retry_count - $retry - 1] remaining retries" stdout
+  log_user 0
+  send "$cmd\r"
+  expect {
+    -re $pattern {
+      if {$printed == 0} {
+        set output $expect_out(buffer)
+        lappend cmd_output $output
+        set printed 1
+      }
+      set success 1
+      print_message "[exec date] Info: Command's($cmd) output consist: $pattern and within $timeout" stdout
+      break
+    }
+    -re "$fallback_prompt_1" {
+     send "$fallback_response_1\r"
+    }
+    timeout {
+      #retry command if pattern not found
+      print_message "[exec date] Warning: Timed out waiting for output for command: $cmd, retrying..." stderr
+      send "$cmd\r"
+    }
+  }
+  if {$success == 1} {
+    break
+  }
+}
+
+if {$success == 0} {
+  if {$printed == 0} {
+    #puts "Clearing buffer with dummy command"
+    set grep_marker bye
+    log_user 0
+    send "\necho '${grep_marker}'\r"
+    expect {
+      -re $grep_marker {
+        set output $expect_out(buffer)
+        lappend cmd_output $output
+      }
+    }
+  }
+  
+  print_message "[exec date] Error: Command: $cmd has failed to return the expected pattern: $pattern within the allowed $timeout and $retry_count retries" stderr
+  print_message "[exec date] Info: Consolidated output of all the previous commands:\n[join $cmd_output \n]" stdout
+  lappend cmd_output $expect_out(buffer)
+  exit 1
+}
+
+}
+
+#Exit the shell
+send "exit\r"
+
+#Print the consolidated output of all commands
+print_message "Consolidated Output:" stdout
+foreach output $cmd_output {
+    puts $output
+}
+
